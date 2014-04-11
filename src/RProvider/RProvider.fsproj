@@ -67,6 +67,7 @@
     </Compile>
     <Compile Include="RServerInfo.fs" />
     <Compile Include="RProvider.fs" />
+    <Compile Include="RRemote.fs" />
     <None Include="example.fsx" />
     <Compile Include="converters.fs" />
     <None Include="packages.config" />
