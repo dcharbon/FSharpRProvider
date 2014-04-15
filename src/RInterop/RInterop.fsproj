@@ -58,6 +58,7 @@
     <Compile Include="Logging.fs" />
     <Compile Include="RInit.fs" />
     <Compile Include="RInterop.fs" />
+    <Compile Include="RInteropRemote.fs" />
     <None Include="RInterop.fsx" />
     <None Include="packages.config" />
   </ItemGroup>

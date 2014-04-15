@@ -315,7 +315,8 @@ module RInterop =
         |> Array.map (fun name -> name, bindingInfo name)
         |> Map.ofSeq
 
-    let callFunc (packageName: string) (funcName: string) (argsByName: seq<KeyValuePair<string, obj>>) (varArgs: obj[]) : SymbolicExpression =
+    // Generic implementation of callFunc so that the function can be reused for differing symbol return types    
+    let callFunc_<'TExpr> (eval: string -> 'TExpr) (packageName: string) (funcName: string) (argsByName: seq<KeyValuePair<string, obj>>) (varArgs: obj[]) : 'TExpr =
         RSafe <| fun () ->
             // We make sure we keep a reference to any temporary symbols until after exec is called, 
             // so that the binding is kept alive in R
@@ -354,6 +355,9 @@ module RInterop =
 
             let expr = sprintf "%s::`%s`(%s)" packageName funcName (String.Join(", ", argList))
             eval expr
+    
+    let callFunc (packageName: string) (funcName: string) (argsByName: seq<KeyValuePair<string, obj>>) (varArgs: obj[]) : SymbolicExpression =
+        callFunc_ eval packageName funcName argsByName varArgs
 
     /// Turn an `RValue` (which captures type information of a value or function)
     /// into a serialized string that can be spliced in a quotation 
@@ -370,25 +374,30 @@ module RInterop =
       else 
         let hasVar = match serialized.[0] with '1' -> true | '0' -> false | _ -> invalidArg "serialized" "Should start with a flag"
         RValue.Function(List.ofSeq (serialized.Substring(1).Split(';')), hasVar)
-        
-    let call (packageName: string) (funcName: string) (serializedRVal:string) (namedArgs: obj[]) (varArgs: obj[]) : SymbolicExpression =
-        //loadPackage packageName
+    
+    // Generic implementation of call so that the function can be reused for differing symbol return types    
+    let call_<'TExpr> (eval: string -> 'TExpr) (packageName: string) (funcName: string) (serializedRVal:string) (namedArgs: obj[]) (varArgs: obj[]) : 'TExpr =
+        RSafe <| fun () ->
+            //loadPackage packageName
 
-        match deserializeRValue serializedRVal with
-        | RValue.Function(rparams, hasVarArg) ->
-            let argNames = rparams
-            let namedArgCount = argNames.Length
+            match deserializeRValue serializedRVal with
+            | RValue.Function(rparams, hasVarArg) ->
+                let argNames = rparams
+                let namedArgCount = argNames.Length
             
-(*            // TODO: Pass this in so it is robust to change
-            if namedArgs.Length <> namedArgCount then
-                failwithf "Function %s expects %d named arguments and you supplied %d" funcName namedArgCount namedArgs.Length 
-*)            
-            let argsByName = seq { for n,v in Seq.zip argNames namedArgs -> KeyValuePair(n, v) }
-            callFunc packageName funcName argsByName varArgs
+    (*            // TODO: Pass this in so it is robust to change
+                if namedArgs.Length <> namedArgCount then
+                    failwithf "Function %s expects %d named arguments and you supplied %d" funcName namedArgCount namedArgs.Length 
+    *)            
+                let argsByName = seq { for n,v in Seq.zip argNames namedArgs -> KeyValuePair(n, v) }
+                callFunc_ eval packageName funcName argsByName varArgs
 
-        | RValue.Value ->
-            let expr = sprintf "%s::%s" packageName funcName
-            eval expr
+            | RValue.Value ->
+                let expr = sprintf "%s::%s" packageName funcName
+                eval expr
+
+    let call (packageName: string) (funcName: string) (serializedRVal:string) (namedArgs: obj[]) (varArgs: obj[]) : SymbolicExpression =
+        call_ eval packageName funcName serializedRVal namedArgs varArgs
 
     /// Convert a value to a value in R.
     /// Generally you shouldn't use this function - it is mainly for testing.
