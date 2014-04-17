@@ -105,6 +105,7 @@ module RInteropInternal =
         | None -> failwithf "No converter registered for type %s or any of its base types" concreteType.FullName
         
     let convertFromRBuiltins<'outType> (sexp: SymbolicExpression) : Option<'outType> = 
+        RSafe <| fun () ->
         let retype (x: 'b) : Option<'a> = x |> box |> unbox |> Some
         let at = typeof<'outType>
         match sexp with
@@ -143,6 +144,7 @@ module RInteropInternal =
         | _                                                 -> None
 
     let convertFromR<'outType> (sexp: SymbolicExpression) : 'outType = 
+        RSafe <| fun () ->
         let concreteType = typeof<'outType>
         let vt = typeof<IConvertFromR<'outType>>
 
@@ -154,6 +156,7 @@ module RInteropInternal =
                        | _ ->  failwithf "No converter registered to convert from R %s to type %s" (sexp.Type.ToString()) concreteType.FullName
 
     let defaultConvertFromRBuiltins (sexp: SymbolicExpression) : Option<obj> = 
+        RSafe <| fun () ->
         let wrap x = box x |> Some
         match sexp with
         | CharacterVector(v) ->     wrap <| v.ToArray()
@@ -171,6 +174,7 @@ module RInteropInternal =
         | _ ->                      None
 
     let defaultConvertFromR (sexp: SymbolicExpression) : obj =
+        RSafe <| fun () ->
         let converters = mefContainer.Value.GetExports<IDefaultConvertFromR>()
         match converters |> Seq.tryPick (fun conv -> conv.Value.Convert sexp) with
         | Some res  -> res
@@ -186,6 +190,7 @@ module RInteropInternal =
             vec
 
     do
+        RSafe <| fun () ->
         registerToR<SymbolicExpression> (fun engine v -> v)
 
         registerToR<string>  (fun engine v -> upcast engine.CreateCharacterVector [|v|])
@@ -266,7 +271,8 @@ module RDotNetExtensions =
         member this.Value = defaultConvertFromR this
 
 module RInterop =
-    let bindingInfo (name: string) : RValue = 
+    let bindingInfo_ (eval: string-> SymbolicExpression) (name: string) : RValue = 
+        RSafe <| fun () ->
         Logging.logf "Getting bindingInfo: %s" name
         match eval("typeof(get(\"" + name + "\"))").GetValue() with
         | "closure" ->
@@ -290,31 +296,52 @@ module RInterop =
             printfn "Ignoring name %s of type %s" name something
             RValue.Value      
 
-    let getPackages() : string[] =
+    let bindingInfo (name: string) : RValue = 
+        bindingInfo_ eval name
+
+    let getPackages_(eval: string -> SymbolicExpression) : string[] =
         eval(".packages(all.available=T)").GetValue()
 
-    let getPackageDescription packageName: string = 
+    let getPackages() : string[] =
+        getPackages_ eval
+
+    let getPackageDescription_ (eval: string -> SymbolicExpression) packageName: string = 
         eval("packageDescription(\"" + packageName + "\")$Description").GetValue()
 
+    let getPackageDescription packageName: string = 
+        getPackageDescription_ eval packageName
+    
+    let getFunctionDescriptions_ (exec: string -> unit) (eval: string -> SymbolicExpression) packageName : Map<string, string> =
+        RSafe <| fun () ->
+            exec <| sprintf """rds = readRDS(system.file("Meta", "Rd.rds", package = "%s"))""" packageName
+            Map.ofArray <| Array.zip ((eval "rds$Name").GetValue()) ((eval "rds$Title").GetValue())
+
     let getFunctionDescriptions packageName : Map<string, string> =
-        exec <| sprintf """rds = readRDS(system.file("Meta", "Rd.rds", package = "%s"))""" packageName
-        Map.ofArray <| Array.zip ((eval "rds$Name").GetValue()) ((eval "rds$Title").GetValue())
+        getFunctionDescriptions_ exec eval packageName
 
     let private packages = System.Collections.Generic.HashSet<string>()
 
-    let loadPackage packageName : unit =
+    let loadPackage_ (eval: string -> SymbolicExpression) (packages: System.Collections.Generic.HashSet<string>) packageName : unit =
+        RSafe <| fun () ->
         if not(packages.Contains packageName) then
             if not(eval("require(" + packageName + ")").GetValue()) then
                 failwithf "Loading package %s failed" packageName
             packages.Add packageName |> ignore
 
-    let getBindings packageName : Map<string, RValue> =
+    let loadPackage packageName : unit =
+        loadPackage_ eval packages packageName
+
+    let getBindings_ (eval: string -> SymbolicExpression) packageName : Map<string, RValue> =
         // TODO: Maybe get these from the environments?
+        RSafe <| fun () ->
         let names = eval(sprintf """ls("package:%s")""" packageName).GetValue()
         names
-        |> Array.map (fun name -> name, bindingInfo name)
+        |> Array.map (fun name -> name, bindingInfo_ eval name)
         |> Map.ofSeq
 
+    let getBindings packageName : Map<string, RValue> =
+        getBindings_ eval packageName
+    
     // Generic implementation of callFunc so that the function can be reused for differing symbol return types    
     let callFunc_<'TExpr> (eval: string -> 'TExpr) (packageName: string) (funcName: string) (argsByName: seq<KeyValuePair<string, obj>>) (varArgs: obj[]) : 'TExpr =
         RSafe <| fun () ->
@@ -405,6 +432,16 @@ module RInterop =
 
     /// Convert a symbolic expression to some default .NET representation
     let defaultFromR (sexp: SymbolicExpression) = RInteropInternal.defaultConvertFromR sexp
+
+    do System.AppDomain.CurrentDomain.add_AssemblyResolve(fun _ args ->
+        let name = System.Reflection.AssemblyName(args.Name)
+        let existingAssembly = 
+            System.AppDomain.CurrentDomain.GetAssemblies()
+            |> Seq.tryFind(fun a -> System.Reflection.AssemblyName.ReferenceMatchesDefinition(name, a.GetName()))
+        match existingAssembly with
+        | Some a -> a
+        | None -> null
+        )
 
 [<AutoOpen>]
 module RDotNetExtensions2 = 

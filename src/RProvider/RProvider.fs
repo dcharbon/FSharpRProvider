@@ -24,11 +24,12 @@ type public RProvider(cfg:TypeProviderConfig) as this =
     // (the engine is initialized lazily, so the initialization always happens
     // after the static constructor is called - by doing this in the static constructor
     // we make sure that this is *not* set in the normal execution)
-    //static do RInit.DisableStackChecking <- true
-    let server = GetServer();
+    static do RInit.DisableStackChecking <- true
+    //let server = GetServer();
 
     /// Assuming initialization worked correctly, generate the types using R engine
     let generateTypes ns asm =
+        RSafe <| fun () ->
         // Expose all available packages as namespaces
         logf "generateTypes: getting packages"
         for package in RInterop.getPackages() do
@@ -111,16 +112,16 @@ type public RProvider(cfg:TypeProviderConfig) as this =
     /// Check if R is installed - if no, generate type with properties displaying
     /// the error message, otherwise go ahead and use 'generateTypes'!
     let initAndGenerate () =
-
+        RSafe <| fun () ->
         // Get the assembly and namespace used to house the provided types
         Logging.logf "initAndGenerate: starting"
         let asm = System.Reflection.Assembly.GetExecutingAssembly()
         let ns = "RProvider"
 
-        //match RInit.initResult.Value with
-        match GetServer().RInitValue with
-        //| RInit.RInitError error ->
-        | Some error ->
+        match RInit.initResult.Value with
+        //match GetServer().RInitValue with
+        | RInit.RInitError error ->
+        //| Some error ->
             // add an error static property (shown when typing `R.`)
             let pty = ProvidedTypeDefinition(asm, ns, "R", Some(typeof<obj>))
             let prop = ProvidedProperty("<Error>", typeof<string>, IsStatic = true, GetterCode = fun _ -> <@@ error @@>)
