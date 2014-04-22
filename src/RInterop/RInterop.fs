@@ -271,6 +271,9 @@ module RDotNetExtensions =
         member this.Value = defaultConvertFromR this
 
 module RInterop =
+    type StringLiteral(value:string) = 
+        member this.value = value
+
     let bindingInfo_ (eval: string-> SymbolicExpression) (name: string) : RValue = 
         RSafe <| fun () ->
         Logging.logf "Getting bindingInfo: %s" name
@@ -313,7 +316,7 @@ module RInterop =
     
     let getFunctionDescriptions_ (exec: string -> unit) (eval: string -> SymbolicExpression) packageName : Map<string, string> =
         RSafe <| fun () ->
-            exec <| sprintf """rds = readRDS(system.file("Meta", "Rd.rds", package = "%s"))""" packageName
+            exec <| sprintf """rds <- readRDS(system.file("Meta", "Rd.rds", package = "%s"))""" packageName
             Map.ofArray <| Array.zip ((eval "rds$Name").GetValue()) ((eval "rds$Title").GetValue())
 
     let getFunctionDescriptions packageName : Map<string, string> =
@@ -355,6 +358,7 @@ module RInterop =
                     | :? int | :? double    -> arg.ToString()
                     //  This doesn't handle escaping so we fall through to using toR 
                     //| :? string as sval     -> "\"" + sval + "\""
+                    | :? StringLiteral as sval -> sval.value
                     | :? bool as bval       -> if bval then "TRUE" else "FALSE"
                     // We allow pairs to be passed, to specify parameter name
                     | _ when arg.GetType().IsConstructedGenericType && arg.GetType().GetGenericTypeDefinition() = typedefof<_*_> 

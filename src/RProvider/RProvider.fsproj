@@ -69,6 +69,7 @@
     <Compile Include="RProvider.fs" />
     <Compile Include="RProviderRemote.fs" />
     <None Include="example.fsx" />
+    <None Include="remote_example.fsx" />
     <Compile Include="converters.fs" />
     <None Include="packages.config" />
     <None Include="RProvider.fsx">

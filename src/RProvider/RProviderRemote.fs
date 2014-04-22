@@ -13,7 +13,23 @@ open System.Reflection
 
 module RProviderRemoteRuntime =
     let mutable remoteSessions = Map.empty
-
+    let getBindingsR = """function (pkgName) {
+    require(pkgName, character.only=TRUE)
+    pkgListing <- ls(paste("package:",pkgName,sep=""))
+    lapply(
+        pkgListing,
+        function (pname) {
+            pval <- get(pname)
+            ptype <- typeof(pval)
+            if (ptype == "closure") {
+                list(name=pname, type=ptype, params=list(names(formals(pname))))
+            } else {
+                list(name=pname, type=ptype, params=NA)
+            }
+        }
+    )
+}"""
+    
     let getRemoteSession host port blocking =
         match remoteSessions.ContainsKey (host,port,blocking) with
         | true -> 
@@ -25,23 +41,63 @@ module RProviderRemoteRuntime =
             remoteSessions <- remoteSessions.Add((host,port,blocking), remoteSession)
             remoteSession
 
+    let bindingName (binding: GenericVector) =
+        RSafe <| fun () ->
+        binding.[0].AsCharacter().[0]
+
+    let bindingType (binding: GenericVector) =
+        RSafe <| fun () ->
+        binding.[1].AsCharacter().[0]
+
+    let bindingParams (binding: GenericVector) =
+        RSafe <| fun () ->
+        let l = binding.[2].AsList()
+        let a = l.AsCharacter()
+        let b = a.[0]
+        let c = 
+            match b with
+            | v when v.StartsWith("c(") -> (eval(v)).GetValue<string[]>()
+            | v -> [|v|]
+            | null -> null
+            
+        match c with
+        | null -> []
+        | args -> List.ofArray args
+
     let generateTypes (session: RemoteSession) (parentType: ProvidedTypeDefinition) =
         RSafe <| fun () ->
         // Expose all packages available in the remote R session as members
         logf "RProviderRemote.generateTypes: getting packages"
+
+        // first, define the remote getBindings function
+        let bindingsFuncHandle = session.evalToHandle getBindingsR
+
         for package in session.getPackages()  do
             let pty = ProvidedTypeDefinition(package, Some(typeof<obj>), HideObjectMethods = true)
             pty.AddXmlDocDelayed <| fun () -> session.getPackageDescription package
             
             pty.AddMembersDelayed( fun () ->
-              [ session.loadPackage package
-                let bindings = session.getBindings package
+              RSafe <| fun () ->
+              [ let bindings = session.evalToSymbolicExpression (sprintf "%s('%s')" bindingsFuncHandle.name package)
                 let titles = lazy session.getFunctionDescriptions package
-                for name, rval in Map.toSeq bindings do
-                    let memberName = makeSafeName name
-                    let serializedRVal = session.serializeRValue rval
-                    match rval with
-                    | RInteropInternal.RValue.Function(paramList, hasVarArgs) ->
+                for entry in bindings.AsList() do
+                    let entryList = entry.AsList()
+                    let name = bindingName entryList
+                    let memberName = makeSafeName (bindingName entryList)
+                    let memberType = bindingType entryList
+                    match memberType with
+                    |  "builtin" | "closure" | "special" ->
+                      let paramList = 
+                        match memberType with
+                        | "closure" -> bindingParams entryList
+                        | _ -> []
+
+                      let hasVarArgs = 
+                        match memberType with
+                        | "closure" -> paramList |> List.exists (fun p -> p = "...")
+                        | _ -> true
+                      
+                      let argList = paramList |> List.filter (fun p -> p <> "...")
                       let paramList = [ for p in paramList -> 
                                                 ProvidedParameter(makeSafeName p,  typeof<obj>, optionalValue=null)
 
@@ -49,11 +105,11 @@ module RProviderRemoteRuntime =
                                             yield ProvidedParameter("paramArray", typeof<obj[]>, optionalValue=null, isParamArray=true)
                                       ]
                       let paramCount = paramList.Length
-                        
+                      let serializedRVal = RInterop.serializeRValue (RValue.Function(argList, hasVarArgs))
                       let pm = ProvidedMethod(
                                     methodName = memberName,
                                     parameters = paramList,
-                                    returnType = typeof<SymbolicExpression>,
+                                    returnType = typeof<RemoteSymbolicExpression>,
                                     InvokeCode = fun args -> if args.Length <> paramCount+1 then // expect arg 0 is connection
                                                                 failwithf "Expected %d arguments and received %d" paramCount args.Length
                                                              if hasVarArgs then
@@ -64,7 +120,10 @@ module RProviderRemoteRuntime =
                                                                 let varArgs = args.[paramCount]
                                                                 <@@ ((%%args.[0]:obj) :?> RemoteSession).call package name serializedRVal %%namedArgs %%varArgs @@>
                                                              else
-                                                                let namedArgs = Quotations.Expr.NewArray(typeof<obj>, args)                                            
+                                                                let namedArgs = 
+                                                                    Array.sub (Array.ofList args) 1 (args.Length-1)
+                                                                    |> List.ofArray
+                                                                let namedArgs = Quotations.Expr.NewArray(typeof<obj>, namedArgs)                                            
                                                                 <@@ ((%%args.[0]:obj) :?> RemoteSession).call package name serializedRVal %%namedArgs [||] @@> )
                       pm.AddXmlDocDelayed (fun () -> match titles.Value.TryFind name with 
                                                      | Some docs -> docs 
@@ -74,19 +133,20 @@ module RProviderRemoteRuntime =
                       let pdm = ProvidedMethod(
                                     methodName = memberName,
                                     parameters = [ ProvidedParameter("paramsByName",  typeof<IDictionary<string,obj>>) ],
-                                    returnType = typeof<SymbolicExpression>,
-                                    InvokeCode = fun args -> if args.Length <> 1 then
-                                                               failwithf "Expected 1 argument and received %d" args.Length
-                                                             let argsByName = args.[0]
+                                    returnType = typeof<RemoteSymbolicExpression>,
+                                    InvokeCode = fun args -> if args.Length <> 2 then
+                                                               failwithf "Expected 2 argument and received %d" args.Length
+                                                             let argsByName = args.[1]
                                                              <@@  let vals = %%argsByName: IDictionary<string,obj>
                                                                   let valSeq = vals :> seq<KeyValuePair<string, obj>>
                                                                   ((%%args.[0]:obj) :?> RemoteSession).callFunc package name valSeq null @@> )
                       yield pdm :> MemberInfo
 
-                    | RValue.Value ->
+                    | _ ->
+                       let serializedRVal = RInterop.serializeRValue RValue.Value
                        yield ProvidedProperty(
                                propertyName = memberName,
-                               propertyType = typeof<SymbolicExpression>,
+                               propertyType = typeof<RemoteSymbolicExpression>,
                                GetterCode = fun args -> <@@ ((%%args.[0]:obj) :?> RemoteSession).call package name serializedRVal [| |] [| |] @@>) :> MemberInfo
               ]
             )

@@ -20,8 +20,3 @@ open RInterop
 open RProvider
 
 do fsi.AddPrinter(fun (synexpr:RDotNet.SymbolicExpression) -> synexpr.Print())
-
-(*
-type RRSession = RemoteR<"localhost",8888,false>
-let rr = new RRSession()
-*)

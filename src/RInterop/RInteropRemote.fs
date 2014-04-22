@@ -11,6 +11,8 @@ open System.Reflection
 
 type RemoteSymbolicExpression(getValue: RemoteSymbolicExpression -> SymbolicExpression, name) =
     member this.name = name
+    
+    // Retrieves the value of the handle from the remote session
     member this.GetValue () =
         getValue(this)
 
@@ -31,7 +33,7 @@ type RemoteSession(connectionName) as this=
     member this.isClosed = false
 
     member this.makeSafeExpr (expr: string) =
-        expr.Replace("\"","\\\\\"").Replace("'", "\\\\'")
+        expr.Replace("\"","\\\\\"").Replace("'", "\\\\\\'").Replace("\n", "\\\\n").Replace("\r", "")
         
     member this.evalToSymbolicExpression expr =
         let expr = this.makeSafeExpr expr
@@ -57,11 +59,42 @@ type RemoteSession(connectionName) as this=
     member this.getRemoteSymbol name =
         this.evalToSymbolicExpression name
 
+    member this.resolveHandle (arg: obj) (temporaryHandles: System.Collections.Generic.List<string>) =
+        match arg with
+        | null -> null
+        | arg when arg.GetType() = typeof<RemoteSymbolicExpression> ->
+            new StringLiteral((arg :?> RemoteSymbolicExpression).name) :> obj
+        | arg ->
+            let symbolName = getNextSymbolName()
+            temporaryHandles.Add(symbolName)
+            this.assign symbolName arg
+            new StringLiteral(symbolName) :> obj
+    
+    member this.resolveHandles (args: obj[]) (temporaryHandles: System.Collections.Generic.List<string>) =
+        if args <> null then
+            [| for arg in args -> this.resolveHandle arg temporaryHandles |]
+        else args
+
+    member this.clearTemporaryHandles (temporaryHandles: System.Collections.Generic.List<string>) =
+        eval(sprintf "evalServer(%s, 'rm(%s); TRUE')" this.connectionName (System.String.Join(",", temporaryHandles))) |> ignore
+        
     member this.call (packageName: string) (funcName: string) (serializedRVal:string) (namedArgs: obj[]) (varArgs: obj[]) : RemoteSymbolicExpression =
-        call_ this.evalToHandle packageName funcName serializedRVal namedArgs varArgs
+        let temporaryHandles = System.Collections.Generic.List<string>()
+        let namedArgs = this.resolveHandles namedArgs temporaryHandles
+        let varArgs = this.resolveHandles varArgs temporaryHandles
+        let result = call_ this.evalToHandle packageName funcName serializedRVal namedArgs varArgs
+        this.clearTemporaryHandles temporaryHandles
+        result
 
     member this.callFunc (packageName: string) (funcName: string) (argsByName: seq<KeyValuePair<string, obj>>) (varArgs: obj[]) : RemoteSymbolicExpression =
-        callFunc_ this.evalToHandle packageName funcName argsByName varArgs
+        let temporaryHandles = System.Collections.Generic.List<string>()
+        let argsByName = 
+            Seq.map 
+                (fun (a: KeyValuePair<string,obj>) -> new KeyValuePair<string,obj>(a.Key, (this.resolveHandle a.Value temporaryHandles))) 
+                argsByName
+        let result = callFunc_ this.evalToHandle packageName funcName argsByName varArgs
+        this.clearTemporaryHandles temporaryHandles
+        result
 
     member this.bindingInfo (name: string) : RValue =
         bindingInfo_ this.evalToSymbolicExpression name
