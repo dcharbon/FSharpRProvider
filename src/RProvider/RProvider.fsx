@@ -19,4 +19,4 @@
 open RInterop
 open RProvider
 
-do fsi.AddPrinter(fun (synexpr:RDotNet.SymbolicExpression) -> synexpr.Print())
+do fsi.AddPrinter(fun (synexpr:RDotNet.SymbolicExpression) -> RSafe <| fun () -> synexpr.Print())

@@ -70,7 +70,7 @@ let internal generateFunction (writer: TextWriter) (packageName: string) (name: 
 let generatePackage (writer: TextWriter) (exposedNames: HashSet<string>) (packageName: string) =
     //fprintfn writer "\tpublic class %s {" (safeName packageName)
     //fprintfn writer "\t\tprivate static object[] emptyArr = new object[0];"
-
+    RSafe <| fun () ->
     RInterop.loadPackage packageName
 
     for name, rval in Map.toSeq (RInterop.getBindings packageName) do
@@ -99,6 +99,7 @@ let parseArgs (argv: string[]) =
 
 [<EntryPoint>]
 let main argv = 
+    RSafe <| fun () ->
     let args = parseArgs argv
     let outFile, packages = 
         match (args.TryFind "outFile"), (args.TryFind "packages") with

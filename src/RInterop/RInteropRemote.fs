@@ -14,10 +14,12 @@ type RemoteSymbolicExpression(getValue: RemoteSymbolicExpression -> SymbolicExpr
     
     // Retrieves the value of the handle from the remote session
     member this.GetValue () =
+        RSafe <| fun () ->
         getValue(this)
 
 type RemoteSession(connectionName) as this=
     static member GetConnection(?host, ?port, ?blocking) =
+        RSafe <| fun () ->
         let host = defaultArg host "localhost"
         let port = defaultArg port 8888
         let blocking =
@@ -60,6 +62,7 @@ type RemoteSession(connectionName) as this=
         this.evalToSymbolicExpression name
 
     member this.resolveHandle (arg: obj) (temporaryHandles: System.Collections.Generic.List<string>) =
+        RSafe <| fun () ->
         match arg with
         | null -> null
         | arg when arg.GetType() = typeof<RemoteSymbolicExpression> ->
@@ -71,6 +74,7 @@ type RemoteSession(connectionName) as this=
             new StringLiteral(symbolName) :> obj
     
     member this.resolveHandles (args: obj[]) (temporaryHandles: System.Collections.Generic.List<string>) =
+        RSafe <| fun () ->
         if args <> null then
             [| for arg in args -> this.resolveHandle arg temporaryHandles |]
         else args
@@ -79,6 +83,7 @@ type RemoteSession(connectionName) as this=
         eval(sprintf "evalServer(%s, 'rm(%s); TRUE')" this.connectionName (System.String.Join(",", temporaryHandles))) |> ignore
         
     member this.call (packageName: string) (funcName: string) (serializedRVal:string) (namedArgs: obj[]) (varArgs: obj[]) : RemoteSymbolicExpression =
+        RSafe <| fun () ->
         let temporaryHandles = System.Collections.Generic.List<string>()
         let namedArgs = this.resolveHandles namedArgs temporaryHandles
         let varArgs = this.resolveHandles varArgs temporaryHandles
@@ -87,6 +92,7 @@ type RemoteSession(connectionName) as this=
         result
 
     member this.callFunc (packageName: string) (funcName: string) (argsByName: seq<KeyValuePair<string, obj>>) (varArgs: obj[]) : RemoteSymbolicExpression =
+        RSafe <| fun () ->
         let temporaryHandles = System.Collections.Generic.List<string>()
         let argsByName = 
             Seq.map 
@@ -108,6 +114,7 @@ type RemoteSession(connectionName) as this=
         | false -> getPackages_ this.evalToSymbolicExpression
 
     member this.getCached useCache (cache : Dictionary<_,_>) key lookup =
+        RSafe <| fun () ->
         match useCache with
         | true when cache.ContainsKey key -> cache.[key]
         | true ->

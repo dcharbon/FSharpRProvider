@@ -11,11 +11,13 @@ open System.Linq
 
 module Factor = 
     let getLevels sexp = 
+        RSafe <| fun () ->
         let rvalStr = RInterop.serializeRValue (RValue.Function(["x"], false))
         let symexpr = RInterop.call "base" "levels" rvalStr [| sexp |] [| |]
         symexpr.AsCharacter().ToArray()
 
     let tryConvert sexp = 
+        RSafe <| fun () ->
         match sexp with
         | IntegerVector(nv) when sexp.Class = [| "factor" |] ->                
                 Some( let levels = getLevels sexp

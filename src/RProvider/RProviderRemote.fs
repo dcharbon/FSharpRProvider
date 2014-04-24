@@ -31,6 +31,7 @@ module RProviderRemoteRuntime =
 }"""
     
     let getRemoteSession host port blocking =
+        RSafe <| fun () ->
         match remoteSessions.ContainsKey (host,port,blocking) with
         | true -> 
             logf "Returning cached session for (%s,%d,%b)" host port blocking

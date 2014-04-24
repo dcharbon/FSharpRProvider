@@ -38,6 +38,7 @@ type public RProvider(cfg:TypeProviderConfig) as this =
 
             pty.AddXmlDocDelayed <| fun () -> RInterop.getPackageDescription package
             pty.AddMembersDelayed( fun () -> 
+              RSafe <| fun () ->
               [ RInterop.loadPackage package
                 let bindings = RInterop.getBindings package
 

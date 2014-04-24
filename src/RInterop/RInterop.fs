@@ -64,6 +64,7 @@ module RInteropInternal =
         toRConv.[typeof<'inType>] <- conv'
 
     let convertToR<'inType> (engine: REngine) (value: 'inType) =
+        RSafe <| fun() ->
         let concreteType = value.GetType()
         let gt = typedefof<IConvertToR<_>>
 
@@ -452,6 +453,7 @@ module RDotNetExtensions2 =
     type RDotNet.SymbolicExpression with
         /// Call the R print function and return output as a string
         member this.Print() : string = 
+            RSafe <| fun() ->
             characterDevice.BeginCapture()
             let rvalStr = RValue.Function(["x"], true) |> RInterop.serializeRValue
             RInterop.call "base" "print" rvalStr [| this |] [| |] |> ignore

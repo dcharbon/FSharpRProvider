@@ -16,6 +16,7 @@
 
 open RDotNet
 open RInterop
+open RInteropInternal
 open RProvider
 open RProvider.``base``
 open System

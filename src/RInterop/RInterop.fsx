@@ -13,5 +13,5 @@
 #r "RInterop.dll"
 open RInterop
 
-do fsi.AddPrinter(fun (synexpr:RDotNet.SymbolicExpression) -> synexpr.Print())
+do fsi.AddPrinter(fun (synexpr:RDotNet.SymbolicExpression) -> RInteropInternal.RSafe <| fun () -> synexpr.Print())
 
